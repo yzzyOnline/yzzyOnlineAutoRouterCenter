@@ -131,4 +131,6 @@ app.post('/ask-ai', async (req, res) => {
     res.json({ state: "complete", package: { package: result } });
 });
 
-app.listen(PORT, () => console.log(`Middleware online on port ${PORT}`));   
+app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Middleware online and listening on 0.0.0.0:${PORT}`);
+});
