@@ -6,7 +6,7 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 10000;
 
-// --- DYNAMIC AI MAP (2026 Edition) ---
+// --- DYNAMIC AI MAP (2026 STABLE STRINGS) ---
 const getTier = (lv, defaultStr) => {
     const config = process.env[`TIER_${lv}`] || defaultStr;
     const [p, m] = config.split(':');
@@ -14,81 +14,126 @@ const getTier = (lv, defaultStr) => {
 };
 
 const AI_MAP = {
-    1:  getTier(1,  'gemini:gemini-3-flash-preview'),  // The new "Speed King"
-    2:  getTier(2,  'groq:llama-3.1-8b-instant'),      // Stable & Fast
-    3:  getTier(3,  'groq:llama-3.3-70b-versatile'),   // Heavy lifter for low tiers
-    4:  getTier(4,  'mistral:mistral-small-latest'),   // Mistral 3 Series
-    5:  getTier(5,  'groq:llama-3.3-70b-versatile'),   // Solid middle ground
-    6:  getTier(6,  'cerebras:qwen-3-32b'),            // Instant inference
-    7:  getTier(7,  'mistral:mistral-medium-latest'),  // Creative & Nuanced
-    8:  getTier(8,  'groq:llama-3.3-70b-versatile'),   // High reasoning
-    9:  getTier(9,  'gemini:gemini-3-flash-preview'),  // High-speed fallback
-    10: getTier(10, 'gemini:gemini-3-pro-preview')     // The "Genius" level
+    1:  getTier(1,  'gemini:gemini-3-flash-preview'),
+    2:  getTier(2,  'groq:llama-3.3-70b-versatile'), 
+    3:  getTier(3,  'groq:llama-3.1-8b-instant'),
+    4:  getTier(4,  'mistral:mistral-small-latest'),
+    5:  getTier(5,  'groq:llama-3.3-70b-versatile'),
+    6:  getTier(6,  'cerebras:qwen-3-32b'),
+    7:  getTier(7,  'mistral:mistral-large-latest'),
+    8:  getTier(8,  'groq:llama-3.3-70b-versatile'),
+    9:  getTier(9,  'gemini:gemini-3-flash-preview'),
+    10: getTier(10, 'gemini:gemini-3-pro-preview')
 };
 
-// --- CORE LOGIC ---
+// --- API PROVIDER HANDLERS ---
 async function callAIProvider(provider, model, prompt, lv) {
     let url, data, headers = { "Content-Type": "application/json" };
     
-    // Inject level into the prompt so the AI knows its "rank"
-    const finalPrompt = `[System: You are Tier ${lv} Intelligence] ${prompt}`;
+    // The "Humility" Preface
+    const systemPreface = `
+[IDENTITY: Tier ${lv}/10 Intelligence]
+[PROTOCOL: JSON-ONLY]
+- If you can handle this task, return: {"state": "complete", "package": "YOUR_RESPONSE"}
+- If this task requires higher intelligence, return: {"state": "error", "package": "need higher level"}
+- Respond ONLY with raw JSON. No markdown formatting.
+`;
+
+    const finalPrompt = `${systemPreface}\n\nUSER_TASK: ${prompt}`;
 
     if (provider === 'gemini') {
         url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${process.env.GEMINI_KEY}`;
-        data = { contents: [{ parts: [{ text: finalPrompt }] }], generationConfig: { responseMimeType: "application/json" } };
+        data = { 
+            contents: [{ parts: [{ text: finalPrompt }] }], 
+            generationConfig: { responseMimeType: "application/json" } 
+        };
     } 
     else if (provider === 'groq') {
         url = "https://api.groq.com/openai/v1/chat/completions";
         headers["Authorization"] = `Bearer ${process.env.GROQ_KEY}`;
-        data = { model, messages: [{ role: "user", content: finalPrompt }], response_format: { type: "json_object" } };
+        data = { 
+            model, 
+            messages: [{ role: "user", content: finalPrompt }], 
+            response_format: { type: "json_object" } 
+        };
     }
     else if (provider === 'mistral') {
         url = "https://api.mistral.ai/v1/chat/completions";
         headers["Authorization"] = `Bearer ${process.env.MISTRAL_KEY}`;
-        data = { model, messages: [{ role: "user", content: finalPrompt }], response_format: { type: "json_object" } };
+        data = { 
+            model, 
+            messages: [{ role: "user", content: finalPrompt }], 
+            response_format: { type: "json_object" } 
+        };
     }
     else if (provider === 'cerebras') {
         url = "https://api.cerebras.ai/v1/chat/completions";
         headers["Authorization"] = `Bearer ${process.env.CEREBRAS_KEY}`;
-        data = { model, messages: [{ role: "user", content: finalPrompt }] };
+        data = { 
+            model, 
+            messages: [{ role: "user", content: finalPrompt }] 
+        };
     }
 
     const res = await axios.post(url, data, { headers, timeout: 15000 });
     
-    if (provider === 'gemini') {
-        const text = res.data.candidates?.[0]?.content?.parts?.[0]?.text;
-        if (!text) throw new Error("Empty Gemini Response");
-        return text;
-    }
-    return res.data.choices[0].message.content;
+    let rawText = provider === 'gemini' 
+        ? res.data.candidates?.[0]?.content?.parts?.[0]?.text 
+        : res.data.choices[0].message.content;
+
+    if (!rawText) throw new Error("Empty Response from Provider");
+    return rawText;
 }
 
-// Zig-Zag Logic
+// --- ZIG-ZAG ENGINE ---
 async function executeZigZag(targetLevel, userPrompt) {
     let tried = new Set();
+
     const run = async (lv) => {
         if (lv < 1 || lv > 10 || tried.has(lv)) return null;
         tried.add(lv);
+
         try {
             const config = AI_MAP[lv];
-            console.log(`Level ${lv} | ${config.p}:${config.m}`);
+            console.log(`[Tier ${lv}] Trying ${config.p}:${config.m}...`);
+            
             const raw = await callAIProvider(config.p, config.m, userPrompt, lv);
-            return JSON.parse(raw).package;
+            const parsed = JSON.parse(raw);
+            
+            // Check for the "Humility" opt-out
+            if (parsed.package === "need higher level" || parsed.state === "error") {
+                console.log(`[Tier ${lv}] Deferred. Climbing to ${lv + 1}...`);
+                return await run(lv + 1);
+            }
+            
+            return parsed.package;
         } catch (err) {
-            console.error(`Lvl ${lv} Fail: ${err.message}`);
-            return (lv === targetLevel && lv > 1) ? await run(lv - 1) : await run(lv + 1);
+            console.error(`[Tier ${lv}] Failed: ${err.message}`);
+            // Fallback strategy: if the target fails, try one step down, else keep climbing
+            if (lv === targetLevel && lv > 1) return await run(lv - 1);
+            return await run(lv + 1);
         }
     };
     return await run(targetLevel);
 }
 
-app.get('/wake', (req, res) => res.status(200).send("Awake"));
+// --- ENDPOINTS ---
+app.get('/wake', (req, res) => res.status(200).send("Middleware v2026.1 Active"));
 
 app.post('/ask-ai', async (req, res) => {
     const { secret, complexity, prompt } = req.body;
-    if (secret !== process.env.MY_APP_SECRET) return res.status(403).json({ state: "error" });
-    const result = await executeZigZag(complexity, prompt);
+    
+    if (secret !== process.env.MY_APP_SECRET) {
+        return res.status(403).json({ state: "error", content: "Unauthorized" });
+    }
+
+    const result = await executeZigZag(parseInt(complexity), prompt);
+    
+    if (!result) {
+        return res.status(503).json({ state: "error", content: "All tiers failed" });
+    }
+
     res.json({ state: "complete", package: { package: result } });
 });
 
-app.listen(PORT, '0.0.0.0', () => console.log(`Middleware 2026 Online on ${PORT}`));
+app.listen(PORT, '0.0.0.0', () => console.log(`Middleware online on port ${PORT}`));
