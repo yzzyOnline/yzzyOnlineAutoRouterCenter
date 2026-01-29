@@ -40,45 +40,30 @@ async function callAIProvider(lv, prompt) {
     const { provider, model } = AI_MAP[lv];
     let url, data, headers = { "Content-Type": "application/json" };
 
-    const finalPrompt = `Provide a JSON response. 
-Structure: {"state": "complete", "package": ${prompt}} 
-If too hard, return: {"state": "too_complex", "package": "climb"}. 
-Task: ${prompt}`;
-
+const systemPreface = `
+[INSTRUCTION]
+You must respond with a JSON object. 
+The JSON must have this structure: {"state": "complete", "package": <RESULT>}
+If you cannot do the task, return: {"state": "too_complex", "package": "climb"}
+`;
     if (provider === 'gemini') {
         url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${process.env.GEMINI_KEY}`;
-        data = { 
-            contents: [{ parts: [{ text: finalPrompt }] }],
-            generationConfig: { responseMimeType: "application/json" }
-        };
+        data = { contents: [{ parts: [{ text: `${systemPreface}\n\nTask: ${prompt}` }] }] };
     } else {
-        // --- PROPERLY ROUTE NON-GEMINI PROVIDERS ---
-        if (provider === 'cerebras') {
-            url = "https://api.cerebras.ai/v1/chat/completions";
-        } else if (provider === 'groq') {
-            url = "https://api.groq.com/openai/v1/chat/completions";
-        } else if (provider === 'mistral') {
-            url = "https://api.mistral.ai/v1/chat/completions";
-        }
-
+        url = provider === 'groq' ? "https://api.groq.com/openai/v1/chat/completions" : 
+              provider === 'mistral' ? "https://api.mistral.ai/v1/chat/completions" :
+              "https://api.cerebras.ai/v1/chat/completions";
         headers["Authorization"] = `Bearer ${process.env[`${provider.toUpperCase()}_KEY`]}`;
         data = { 
             model, 
-            messages: [{ role: "user", content: finalPrompt }],
+            messages: [{ role: "user", content: `${systemPreface}\n\nTask: ${prompt}` }],
             response_format: { type: "json_object" } 
         };
     }
 
     const res = await axios.post(url, data, { headers, timeout: 45000 });
-    
-    // Extract the text based on the provider's specific response format
-    let rawText = provider === 'gemini' 
-        ? res.data.candidates[0].content.parts[0].text 
-        : res.data.choices[0].message.content;
-    
-    // Clean potential Markdown bloat
-    rawText = rawText.replace(/```json/g, "").replace(/```/g, "").trim();
-    return JSON.parse(rawText);
+    const raw = provider === 'gemini' ? res.data.candidates[0].content.parts[0].text : res.data.choices[0].message.content;
+    return JSON.parse(raw);
 }
 
 // --- 4. FULL SWEEP CASCADE ENGINE ---
