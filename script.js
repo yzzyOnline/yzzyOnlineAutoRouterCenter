@@ -40,10 +40,12 @@ async function callAIProvider(lv, prompt) {
     const { provider, model } = AI_MAP[lv];
     let url, data, headers = { "Content-Type": "application/json" };
 
-    const systemPreface = `
+const systemPreface = `
 [PROTOCOL: JSON-ONLY]
-Return JSON: {"state": "complete", "package": {"clue": "...", "answer": "..."}}
-If too complex for Tier ${lv}, return: {"state": "too_complex", "package": "climb"}
+- You are Tier ${lv}/10 Intelligence.
+- If the task is too complex, return exactly: {"state": "too_complex", "package": "climb"}
+- Otherwise, return your response in this JSON format: {"state": "complete", "package": <AS_REQUESTED_IN_PROMPT>}
+- Respond ONLY with the raw JSON.
 `;
 
     if (provider === 'gemini') {
