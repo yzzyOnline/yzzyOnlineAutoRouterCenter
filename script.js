@@ -150,5 +150,8 @@ app.post('/ask-ai', async (req, res) => {
     }
 });
 
-const server = app.listen(PORT, () => console.log(`Middleware listening on ${PORT}`));
+const server = app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Middleware listening on port ${PORT} at 0.0.0.0`);
+});
+
 server.keepAliveTimeout = 125000;
