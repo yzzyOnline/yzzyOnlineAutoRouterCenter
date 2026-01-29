@@ -14,16 +14,16 @@ const getTierConfig = (lv, defaultVal) => {
 };
 
 const AI_MAP = {
-    1:  getTierConfig(1,  'gemini:gemini-1.5-flash'),
-    2:  getTierConfig(2,  'groq:llama-3.1-8b-instant'),
-    3:  getTierConfig(3,  'gemini:gemini-1.5-flash'),
+    1:  getTierConfig(1,  'gemini:gemini-2.0-flash'), // Updated
+    2:  getTierConfig(2,  'groq:llama-3.3-70b-versatile'), // More stable
+    3:  getTierConfig(3,  'gemini:gemini-2.0-flash'),
     4:  getTierConfig(4,  'mistral:mistral-small-latest'),
     5:  getTierConfig(5,  'groq:llama-3.3-70b-specdec'),
     6:  getTierConfig(6,  'cerebras:llama-3.3-70b'),
     7:  getTierConfig(7,  'mistral:mistral-large-latest'),
-    8:  getTierConfig(8,  'groq:llama-3.3-70b-specdec'),
-    9:  getTierConfig(9,  'gemini:gemini-1.5-pro'),
-    10: getTierConfig(10, 'gemini:gemini-1.5-pro')
+    8:  getTierConfig(8,  'groq:llama-3.3-70b-versatile'),
+    9:  getTierConfig(9,  'gemini:gemini-2.0-pro-exp'), // Updated
+    10: getTierConfig(10, 'gemini:gemini-2.0-pro-exp')
 };
 
 // --- 2. UTILS ---
@@ -41,13 +41,11 @@ async function callAIProvider(lv, prompt) {
     let url, data, headers = { "Content-Type": "application/json" };
 
 const systemPreface = `
-[PROTOCOL: JSON-ONLY]
-- You are Tier ${lv}/10 Intelligence.
-- If the task is too complex, return exactly: {"state": "too_complex", "package": "climb"}
-- Otherwise, return your response in this JSON format: {"state": "complete", "package": <AS_REQUESTED_IN_PROMPT>}
-- Respond ONLY with the raw JSON.
+[INSTRUCTION]
+You must respond with a JSON object. 
+The JSON must have this structure: {"state": "complete", "package": <RESULT>}
+If you cannot do the task, return: {"state": "too_complex", "package": "climb"}
 `;
-
     if (provider === 'gemini') {
         url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${process.env.GEMINI_KEY}`;
         data = { contents: [{ parts: [{ text: `${systemPreface}\n\nTask: ${prompt}` }] }] };
