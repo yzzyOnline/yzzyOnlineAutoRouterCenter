@@ -6,7 +6,7 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 10000;
 
-// --- DYNAMIC AI MAP (2026 STABLE STRINGS) ---
+// --- DYNAMIC AI MAP (2026 STABLE) ---
 const getTier = (lv, defaultStr) => {
     const config = process.env[`TIER_${lv}`] || defaultStr;
     const [p, m] = config.split(':');
@@ -15,28 +15,28 @@ const getTier = (lv, defaultStr) => {
 
 const AI_MAP = {
     1:  getTier(1,  'gemini:gemini-3-flash-preview'),
-    2:  getTier(2,  'groq:llama-3.3-70b-versatile'), 
-    3:  getTier(3,  'groq:llama-3.1-8b-instant'),
+    2:  getTier(2,  'groq:llama-3.1-8b-instant'),
+    3:  getTier(3,  'gemini:gemini-3-flash-preview'),
     4:  getTier(4,  'mistral:mistral-small-latest'),
-    5:  getTier(5,  'groq:llama-3.3-70b-versatile'),
-    6:  getTier(6,  'cerebras:qwen-3-32b'),
+    5:  getTier(5,  'groq:llama-3.3-70b-specdec'),
+    6:  getTier(6,  'cerebras:llama-3.3-70b'),
     7:  getTier(7,  'mistral:mistral-large-latest'),
-    8:  getTier(8,  'groq:llama-3.3-70b-versatile'),
-    9:  getTier(9,  'gemini:gemini-3-flash-preview'),
-    10: getTier(10, 'gemini:gemini-3-pro-preview')
+    8:  getTier(8,  'groq:llama-3.3-70b-specdec'),
+    9:  getTier(9,  'gemini:gemini-3-pro-preview'),
+    10: getTier(10, 'gemini:gemini-3-pro') // The heavyweight
 };
 
-// --- API PROVIDER HANDLERS ---
-async function callAIProvider(provider, model, prompt, lv) {
+// --- CORE PROVIDER CALL ---
+async function callAIProvider(lv, prompt) {
+    const { p: provider, m: model } = AI_MAP[lv];
     let url, data, headers = { "Content-Type": "application/json" };
-    
-    // The "Humility" Preface
+
     const systemPreface = `
 [IDENTITY: Tier ${lv}/10 Intelligence]
 [PROTOCOL: JSON-ONLY]
-- If you can handle this task, return: {"state": "complete", "package": "YOUR_RESPONSE"}
-- If this task requires higher intelligence, return: {"state": "error", "package": "need higher level"}
-- Respond ONLY with raw JSON. No markdown formatting.
+- If task is too hard, return: {"state": "too_complex", "package": "need higher level"}
+- Otherwise, return: {"state": "complete", "package": "YOUR_RESPONSE"}
+- Respond ONLY with raw JSON.
 `;
 
     const finalPrompt = `${systemPreface}\n\nUSER_TASK: ${prompt}`;
@@ -44,96 +44,92 @@ async function callAIProvider(provider, model, prompt, lv) {
     if (provider === 'gemini') {
         url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${process.env.GEMINI_KEY}`;
         data = { 
-            contents: [{ parts: [{ text: finalPrompt }] }], 
-            generationConfig: { responseMimeType: "application/json" } 
+            contents: [{ parts: [{ text: finalPrompt }] }],
+            generationConfig: { responseMimeType: "application/json" }
         };
-    } 
-    else if (provider === 'groq') {
-        url = "https://api.groq.com/openai/v1/chat/completions";
-        headers["Authorization"] = `Bearer ${process.env.GROQ_KEY}`;
+    } else if (provider === 'groq' || provider === 'mistral' || provider === 'cerebras') {
+        url = provider === 'groq' ? "https://api.groq.com/openai/v1/chat/completions" :
+              provider === 'mistral' ? "https://api.mistral.ai/v1/chat/completions" :
+              "https://api.cerebras.ai/v1/chat/completions";
+        
+        headers["Authorization"] = `Bearer ${process.env[`${provider.toUpperCase()}_KEY`]}`;
         data = { 
             model, 
-            messages: [{ role: "user", content: finalPrompt }], 
-            response_format: { type: "json_object" } 
-        };
-    }
-    else if (provider === 'mistral') {
-        url = "https://api.mistral.ai/v1/chat/completions";
-        headers["Authorization"] = `Bearer ${process.env.MISTRAL_KEY}`;
-        data = { 
-            model, 
-            messages: [{ role: "user", content: finalPrompt }], 
-            response_format: { type: "json_object" } 
-        };
-    }
-    else if (provider === 'cerebras') {
-        url = "https://api.cerebras.ai/v1/chat/completions";
-        headers["Authorization"] = `Bearer ${process.env.CEREBRAS_KEY}`;
-        data = { 
-            model, 
-            messages: [{ role: "user", content: finalPrompt }] 
+            messages: [{ role: "user", content: finalPrompt }],
+            response_format: { type: "json_object" }
         };
     }
 
-    const res = await axios.post(url, data, { headers, timeout: 15000 });
+    // Increased timeout to 45s for Tier 10 thinking time
+    const res = await axios.post(url, data, { headers, timeout: 45000 });
     
     let rawText = provider === 'gemini' 
         ? res.data.candidates?.[0]?.content?.parts?.[0]?.text 
         : res.data.choices[0].message.content;
 
-    if (!rawText) throw new Error("Empty Response from Provider");
-    return rawText;
+    return JSON.parse(rawText);
 }
 
-// --- ZIG-ZAG ENGINE ---
-async function executeZigZag(targetLevel, userPrompt) {
-    let tried = new Set();
+// --- THE HYBRID CASCADE ENGINE ---
+async function executeHybridCascade(initialLevel, userPrompt) {
+    let currentLevel = initialLevel;
+    let attempted = new Set();
 
-    const run = async (lv) => {
-        if (lv < 1 || lv > 10 || tried.has(lv)) return null;
-        tried.add(lv);
+    while (currentLevel >= 1 && currentLevel <= 10) {
+        if (attempted.has(currentLevel)) {
+            // If we've already tried this level and failed, step down further
+            currentLevel--;
+            continue;
+        }
+        attempted.add(currentLevel);
 
         try {
-            const config = AI_MAP[lv];
-            console.log(`[Tier ${lv}] Trying ${config.p}:${config.m}...`);
+            console.log(`[Hybrid] Attempting Tier ${currentLevel}...`);
+            const result = await callAIProvider(currentLevel, userPrompt);
             
-            const raw = await callAIProvider(config.p, config.m, userPrompt, lv);
-            const parsed = JSON.parse(raw);
-            
-            // Check for the "Humility" opt-out
-            if (parsed.package === "need higher level" || parsed.state === "error") {
-                console.log(`[Tier ${lv}] Deferred. Climbing to ${lv + 1}...`);
-                return await run(lv + 1);
+            // UPWARD Path: AI says it's not smart enough
+            if (result.state === "too_complex" && currentLevel < 10) {
+                console.log(`[Hybrid] Tier ${currentLevel} too low. Climbing up...`);
+                currentLevel++;
+                continue;
             }
             
-            return parsed.package;
+            return result.package; // Success!
+
         } catch (err) {
-            console.error(`[Tier ${lv}] Failed: ${err.message}`);
-            // Fallback strategy: if the target fails, try one step down, else keep climbing
-            if (lv === targetLevel && lv > 1) return await run(lv - 1);
-            return await run(lv + 1);
+            // DOWNWARD Path: Infrastructure/Connection/Rate-Limit Failure
+            console.error(`[Hybrid] Tier ${currentLevel} Infrasturcture Error: ${err.message}`);
+            
+            if (currentLevel > 1) {
+                console.log(`[Hybrid] Dropping down to Tier ${currentLevel - 1} for reliability...`);
+                currentLevel--;
+            } else {
+                return null; // Bottom of the stack reached
+            }
         }
-    };
-    return await run(targetLevel);
+    }
+    return null;
 }
 
 // --- ENDPOINTS ---
-app.get('/wake', (req, res) => res.status(200).send("Middleware v2026.1 Active"));
+app.get('/wake', (req, res) => res.status(200).send("Hybrid Cascade v2.0 Active"));
 
 app.post('/ask-ai', async (req, res) => {
     const { secret, complexity, prompt } = req.body;
     
     if (secret !== process.env.MY_APP_SECRET) {
-        return res.status(403).json({ state: "error", content: "Unauthorized" });
+        return res.status(403).json({ state: "error", package: { package: "Unauthorized" } });
     }
 
-    const result = await executeZigZag(parseInt(complexity), prompt);
+    const finalAnswer = await executeHybridCascade(parseInt(complexity), prompt);
     
-    if (!result) {
+    if (!finalAnswer) {
         return res.status(503).json({ state: "error", content: "All tiers failed" });
     }
 
-    res.json({ state: "complete", package: { package: result } });
+    // Wrap in the format Godot expects
+    res.json({ state: "complete", package: { package: finalAnswer } });
 });
 
-app.listen(PORT, '0.0.0.0', () => console.log(`Middleware online on port ${PORT}`));
+const server = app.listen(PORT, '0.0.0.0', () => console.log(`Middleware online on port ${PORT}`));
+server.keepAliveTimeout = 120000; // 2 minute keep-alive for heavy models
