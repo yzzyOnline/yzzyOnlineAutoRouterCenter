@@ -41,10 +41,21 @@ async function callAIProvider(lv, prompt) {
     let url, data, headers = { "Content-Type": "application/json" };
 
 const systemPreface = `
-[INSTRUCTION]
-You must respond with a JSON object. 
-The JSON must have this structure: {"state": "complete", "package": <RESULT>}
-If you cannot do the task, return: {"state": "too_complex", "package": "climb"}
+[PROTOCOL: JSON-ONLY]
+You are a specialized AI node. You must respond ONLY with a valid JSON object.
+The output MUST follow this schema:
+{
+  "state": "complete",
+  "package": <CONTENT>
+}
+
+If the request is too difficult for your current tier (${lv}), return:
+{
+  "state": "too_complex",
+  "package": "climb"
+}
+
+Task context: The word 'json' is required for validation. Ensure your package matches the user's requested data structure.
 `;
     if (provider === 'gemini') {
         url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${process.env.GEMINI_KEY}`;
