@@ -3,6 +3,7 @@ const express = require('express');
 const axios = require('axios');
 const crypto = require('crypto');
 const cors = require('cors');
+const rateLimit = require('express-rate-limit');
 const app = express();
 
 // --- 1. CORS & ORIGIN WHITELIST ---
@@ -21,11 +22,25 @@ app.use(cors({
 
 app.use(express.json());
 
+// --- 2. RATE LIMITER ---
+// Configurable via env vars, sensible defaults out of the box.
+// RATE_LIMIT_WINDOW_MS: window in milliseconds (default: 1 minute)
+// RATE_LIMIT_MAX:       max requests per window per IP (default: 30)
+const limiter = rateLimit({
+    windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 60 * 1000,
+    max: parseInt(process.env.RATE_LIMIT_MAX) || 30,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { state: "error", content: "Too many requests, please slow down." }
+});
+
+app.use('/ask-ai', limiter);
+
 const PORT = process.env.PORT || 10000;
 
-// --- 2. KEY POOLS ---
-// Multiple keys per provider separated by "-" in the env var.
-// e.g. GEMINI_KEY=key1-key2-key3
+// --- 3. KEY POOLS ---
+// Multiple keys per provider separated by "|" in the env var.
+// e.g. GEMINI_KEY=key1|key2|key3
 // At startup, each is split into an array and tried in order on failure.
 const KEY_POOLS = {};
 ['GEMINI', 'GROQ', 'MISTRAL', 'CEREBRAS'].forEach(provider => {
@@ -33,7 +48,7 @@ const KEY_POOLS = {};
     KEY_POOLS[provider] = raw.split('|').map(k => k.trim()).filter(Boolean);
 });
 
-// --- 3. MODEL ARRAY ---
+// --- 4. MODEL ARRAY ---
 // Ordered from least to most capable (difficulty 0.0 → 1.0).
 // Add, remove, or reorder freely — the cascade adapts automatically.
 const MODELS = [
@@ -55,7 +70,7 @@ function difficultyToIndex(difficulty) {
     return Math.round(clamped * (MODELS.length - 1));
 }
 
-// --- 4. UTILS ---
+// --- 5. UTILS ---
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 // Timing-safe secret comparison to prevent timing attacks
@@ -68,7 +83,7 @@ function checkSecret(provided) {
     );
 }
 
-// --- 5. PROVIDER CALL (with key rotation) ---
+// --- 6. PROVIDER CALL (with key rotation) ---
 async function callAIProvider(index, prompt) {
     const { provider, model } = MODELS[index];
     const keys = KEY_POOLS[provider.toUpperCase()];
@@ -79,7 +94,6 @@ async function callAIProvider(index, prompt) {
 
     let lastError;
 
-    // Try each key in order until one works
     for (let ki = 0; ki < keys.length; ki++) {
         const key = keys[ki];
         let url, data, headers = { "Content-Type": "application/json" };
@@ -99,7 +113,7 @@ If the request is too difficult for your current tier (${index + 1} of ${MODELS.
   "package": "climb"
 }
 
-Task context: The word 'json' is required for validation. Ensure your package matches the user's requested data structure.
+Task context:  Ensure your package matches the user's requested data structure.
 `;
 
         if (provider === 'gemini') {
@@ -149,14 +163,12 @@ Task context: The word 'json' is required for validation. Ensure your package ma
     throw lastError;
 }
 
-// --- 6. FULL SWEEP CASCADE ENGINE ---
+// --- 7. FULL SWEEP CASCADE ENGINE ---
 async function executeFullSweep(difficulty, userPrompt) {
     let currentIndex = difficultyToIndex(difficulty);
     const visited = new Set();
     const total = MODELS.length;
 
-    // Finds the next unvisited index, preferring upward (more capable) first,
-    // then downward — guarantees every model is tried before giving up.
     function nextUnvisited(from) {
         for (let step = 1; step < total; step++) {
             const up   = from + step;
@@ -209,7 +221,7 @@ async function executeFullSweep(difficulty, userPrompt) {
     return null;
 }
 
-// --- 7. APP ROUTES ---
+// --- 8. APP ROUTES ---
 app.get('/wake', (req, res) => res.status(200).send("Full Sweep Online"));
 
 app.post('/ask-ai', async (req, res) => {
@@ -227,10 +239,10 @@ app.post('/ask-ai', async (req, res) => {
 
 const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`Middleware listening on port ${PORT} at 0.0.0.0`);
-    // Log key pool sizes at startup for easy verification
     Object.entries(KEY_POOLS).forEach(([provider, keys]) => {
         console.log(`[Keys] ${provider}: ${keys.length} key(s) loaded`);
     });
+    console.log(`[Rate Limit] ${parseInt(process.env.RATE_LIMIT_MAX) || 30} requests / ${(parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 60000) / 1000}s per IP`);
 });
 
 server.keepAliveTimeout = 125000;
