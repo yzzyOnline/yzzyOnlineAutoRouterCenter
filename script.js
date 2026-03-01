@@ -27,16 +27,16 @@ const PORT = process.env.PORT || 10000;
 // Ordered from least to most capable (difficulty 0.0 → 1.0).
 // Add, remove, or reorder freely — the cascade adapts automatically.
 const MODELS = [
-    { provider: 'gemini',   model: 'gemini-2.0-flash' },
-    { provider: 'groq',     model: 'llama-3.3-70b-versatile' },
-    { provider: 'gemini',   model: 'gemini-2.0-flash' },
-    { provider: 'mistral',  model: 'mistral-small-latest' },
-    { provider: 'groq',     model: 'llama-3.3-70b-specdec' },
-    { provider: 'cerebras', model: 'llama-3.3-70b' },
-    { provider: 'mistral',  model: 'mistral-large-latest' },
-    { provider: 'groq',     model: 'llama-3.3-70b-versatile' },
-    { provider: 'gemini',   model: 'gemini-2.0-pro-exp' },
-    { provider: 'gemini',   model: 'gemini-2.0-pro-exp' },
+    { provider: 'cerebras', model: 'llama3.1-8b' },            // 0.00 — fastest, lightest
+    { provider: 'groq',     model: 'llama-3.3-70b-versatile' },// 0.11 — fast, reliable
+    { provider: 'cerebras', model: 'llama-3.3-70b' },          // 0.22 — cerebras 70b
+    { provider: 'gemini',   model: 'gemini-2.0-flash' },       // 0.33 — gemini fast
+    { provider: 'groq',     model: 'llama-3.3-70b-specdec' },  // 0.44 — groq speculative
+    { provider: 'mistral',  model: 'mistral-small-latest' },   // 0.56 — mistral small
+    { provider: 'groq',     model: 'llama-3.3-70b-versatile' },// 0.67 — groq again as fallback
+    { provider: 'mistral',  model: 'mistral-large-latest' },   // 0.78 — mistral large
+    { provider: 'gemini',   model: 'gemini-2.5-flash' },       // 0.89 — gemini 2.5 thinking
+    { provider: 'gemini',   model: 'gemini-2.5-pro' },         // 1.00 — most capable
 ];
 
 // Converts a 0.0–1.0 float to the nearest index in MODELS.
